@@ -1,0 +1,130 @@
+﻿@page "/subscription"
+@inject HttpClient Http
+@inject IConfiguration Configuration
+@inject NavigationManager NavigationManager
+
+<h3>Choose Your Subscription Plan</h3>
+
+<div>
+    <label for="planSelect">Select a plan:</label>
+    <select id="planSelect" @bind="selectedPlan">
+        <option value="">-- Select a plan --</option>
+        <option value="plan1">Plan 1 - 1€/month</option>
+        <option value="plan2">Plan 2 - 2€/month</option>
+    </select>
+</div>
+
+<button @onclick="Subscribe">Subscribe</button>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <p>@message</p>
+}
+
+@code {
+    private string selectedPlan;
+    private string message;
+
+    private async Task Subscribe()
+    {
+        if (string.IsNullOrEmpty(selectedPlan))
+        {
+            message = "Please select a plan.";
+            return;
+        }
+
+        int amount = selectedPlan == "plan1" ? 100 : 200; // Amount in cents
+
+        var vivaWalletSettings = Configuration.GetSection("VivaWalletSettings").Get<VivaWalletSettings>();
+
+        // Base64 encode the MerchantId:ApiKey
+        var credentials = $"{vivaWalletSettings.MerchantId}:{vivaWalletSettings.ApiKey}";
+        var base64Credentials = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(credentials));
+
+        // Create the subscription request payload
+        var subscriptionRequest = new
+        {
+            amount = amount, // Amount in cents
+            customerTrns = "Monthly subscription for Plan " + selectedPlan, // Short description for the customer
+            customer = new
+            {
+                email = "john@text.com",
+                fullName = "John Doe",
+                phone = "1234567890",
+                countryCode = "GR", // Replace with the appropriate country code
+                requestLang = "el-GR" // Replace with the appropriate language code
+            },
+            preauth = false,
+            maxInstallments = 12,
+            isPreAuth = false,
+            paymentTimeout = 86400, // Payment timeout in seconds
+            allowRecurring = true, // Allow recurring payments
+            sourceCode = "5151", // Source code for the transaction
+            paymentNotification = true,
+            merchantTrns = "Subscription for Plan " + selectedPlan, // Short description for the merchant
+            tags = new[] { "subscription", "plan" + selectedPlan }, // Optional tags
+            successUrl = "https://550a-2a02-2149-8be3-3000-e597-1923-c039-b70f.ngrok-free.app/payment-success", // Replace with your ngrok URL
+            failUrl = "https://550a-2a02-2149-8be3-3000-e597-1923-c039-b70f.ngrok-free.app/payment-fail" // Replace with your ngrok URL
+        };
+
+
+
+        try
+        {
+            var endpoint = $"{vivaWalletSettings.BaseUrl}/api/orders"; // Correct endpoint
+            //var endpoint = $"{vivaWalletSettings.BaseUrl}/checkout/v2/orders"; // test
+            var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", base64Credentials);
+            request.Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(subscriptionRequest), System.Text.Encoding.UTF8, "application/json");
+
+            var response = await Http.SendAsync(request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var orderResponse = System.Text.Json.JsonSerializer.Deserialize<OrderResponse>(responseContent);
+
+                // Debugging: Log the order response
+                Console.WriteLine("--------Order Response--------------");
+                Console.WriteLine("Order Response: " + responseContent);
+                Console.WriteLine("Order Response: " + orderResponse);
+                Console.WriteLine("----------------------");
+
+                // Redirect the user to the payment page
+                var paymentUrl = $"{vivaWalletSettings.BaseUrl}/web/checkout?ref={orderResponse.OrderCode}";
+                Console.WriteLine("Payment URL: " + paymentUrl);
+
+                NavigationManager.NavigateTo(paymentUrl, forceLoad: true);
+                Console.WriteLine("Navigate ok");
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                message = "Subscription failed. Please try again. Error: " + errorContent;
+            }
+        }
+        catch (Exception ex)
+        {
+            message = "An error occurred. Please try again.";
+            Console.WriteLine("Exception: " + ex.Message);
+        }
+    }
+
+    public class VivaWalletSettings
+    {
+        public string ApiKey { get; set; }
+        public string MerchantId { get; set; }
+        public string BaseUrl { get; set; }
+    }
+
+    public class OrderResponse
+    {
+        public long OrderCode { get; set; }
+        public int ErrorCode { get; set; }
+        public string ErrorText { get; set; }
+        public DateTime TimeStamp { get; set; }
+        public string CorrelationId { get; set; }
+        public int EventId { get; set; }
+        public bool Success { get; set; }
+    }
+}
